@@ -14,13 +14,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🧹 自动清理磁盘空间 (核心步骤)
+      - name: 🧹 自动清理磁盘空间
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune -a -f
+          # 释放更多空间
+          sudo apt-get clean
+          df -h
 
       - name: 🛠 安装依赖并下载源码
         run: |
@@ -28,18 +31,18 @@ jobs:
           mkdir kernel_workspace && cd kernel_workspace
           sudo apt update && sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2 unzip
           
-          # 下载源码并修正分支名 (main)
+          # 【修正点】仓库名称改为 GT7Pro (P大写)
           aria2c -s16 -x16 -k1M https://github.com/realme-kernel-opensource/realme_GT7Pro-AndroidB-common-source/archive/refs/heads/main.zip -o common.zip
           unzip -q common.zip && mv "realme_GT7Pro-AndroidB-common-source-main" common
           rm -rf common.zip
           
-          # 下载编译器工具链
+          # 下载编译器
           mkdir -p clang18 && aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/clang-r510928.zip -o clang.zip
           unzip -q clang.zip -d clang18 && rm -rf clang.zip
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip -o build-tools.zip
           unzip -q build-tools.zip && rm -rf build-tools.zip
 
-      - name: 🛠️ 注入 /dev/my_comm 驱动 (修复 Makefile 逻辑)
+      - name: 🛠️ 注入 /dev/my_comm 驱动 (ioctl 通信)
         run: |
           cd kernel_workspace/common/drivers/misc
           cat <<EOF > my_ioctl_driver.c
@@ -59,7 +62,7 @@ jobs:
               char buf[128];
               if (cmd == CMD_SEND_DATA) {
                   if (copy_from_user(buf, (char __user *)arg, sizeof(buf))) return -EFAULT;
-                  printk(KERN_INFO "内核收到 ioctl 数据: %s\n", buf);
+                  printk(KERN_INFO "内核收到数据: %s\n", buf);
               }
               return 0;
           }
@@ -83,7 +86,6 @@ jobs:
           module_exit(my_exit);
           MODULE_LICENSE("GPL v2");
           EOF
-          # 使用 sed 将驱动加入 Makefile 第一行，确保链接顺序正确
           sed -i '1i\obj-y += my_ioctl_driver.o' Makefile
 
       - name: ⚙️ 配置 KernelSU 与 SUSFS
@@ -100,6 +102,7 @@ jobs:
           cd kernel_workspace/common
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
+          # 修正版本号注入方式
           sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"${DEFAULT_SUFFIX}\"/" arch/arm64/configs/gki_defconfig
           sed -i 's/${scm_version}//' scripts/setlocalversion
 
