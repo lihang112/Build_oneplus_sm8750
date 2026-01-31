@@ -7,7 +7,6 @@ jobs:
     name: Build_Realme_GT7Pro
     runs-on: ubuntu-latest
     env:
-      # 严格匹配你手机截图的内核版本后缀
       DEFAULT_SUFFIX: "-android15-8-gf4dc45704e54-abogki446052083-4k"
       KERNEL_TIME: "Fri Sep 19 06:13:40 UTC 2025"
     steps:
@@ -24,18 +23,16 @@ jobs:
           sudo docker image prune -a -f
           sudo apt-get clean
 
-      - name: 🛠 安装依赖并下载源码
+      - name: 🛠 安装依赖并克隆源码
         run: |
           rm -rf kernel_workspace
           mkdir kernel_workspace && cd kernel_workspace
-          sudo apt update && sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2 unzip
+          sudo apt update && sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2 unzip git
           
-          # 【核心修复】修正链接中的 GT7Pro 大写 P
-          aria2c -s16 -x16 -k1M "https://github.com/realme-kernel-opensource/realme_GT7Pro-AndroidB-common-source/archive/refs/heads/main.zip" -o common.zip
-          
-          # 解压并重命名文件夹
-          unzip -q common.zip && mv "realme_GT7Pro-AndroidB-common-source-main" common
-          rm -rf common.zip
+          # 使用 git clone 代替 aria2c，避免链接失效问题
+          # 尝试克隆 master 分支，如果失败则尝试 main
+          git clone --depth=1 https://github.com/realme-kernel-opensource/realme_GT7Pro-AndroidB-common-source.git -b master common || \
+          git clone --depth=1 https://github.com/realme-kernel-opensource/realme_GT7Pro-AndroidB-common-source.git -b main common
           
           # 下载编译器工具链
           mkdir -p clang18 && aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/clang-r510928.zip -o clang.zip
@@ -43,7 +40,7 @@ jobs:
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip -o build-tools.zip
           unzip -q build-tools.zip && rm -rf build-tools.zip
 
-      - name: 🛠️ 注入 /dev/my_comm 驱动 (ioctl 通信端口)
+      - name: 🛠️ 注入 /dev/my_comm 驱动
         run: |
           cd kernel_workspace/common/drivers/misc
           cat <<EOF > my_ioctl_driver.c
@@ -63,7 +60,7 @@ jobs:
               char buf[128];
               if (cmd == CMD_SEND_DATA) {
                   if (copy_from_user(buf, (char __user *)arg, sizeof(buf))) return -EFAULT;
-                  printk(KERN_INFO "内核端口收到数据: %s\n", buf);
+                  printk(KERN_INFO "内核通过 ioctl 收到数据: %s\n", buf);
               }
               return 0;
           }
@@ -87,14 +84,13 @@ jobs:
           module_exit(my_exit);
           MODULE_LICENSE("GPL v2");
           EOF
-          # 将驱动模块加入编译列表
           sed -i '1i\obj-y += my_ioctl_driver.o' Makefile
 
       - name: ⚙️ 配置 KernelSU 与 SUSFS
         run: |
           cd kernel_workspace
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
-          git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-android15-6.6
+          git clone --depth=1 https://github.com/ShirkNeko/susfs4ksu.git -b gki-android15-6.6
           cd ./common && patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || true
           cp ../susfs4ksu/kernel_patches/fs/* ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
@@ -107,7 +103,7 @@ jobs:
           sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"${DEFAULT_SUFFIX}\"/" arch/arm64/configs/gki_defconfig
           sed -i 's/${scm_version}//' scripts/setlocalversion
 
-      - name: 🔨 编译内核 (骁龙 8 至尊版 SM8750)
+      - name: 🔨 编译内核 (SM8750)
         run: |
           WORKDIR="$(pwd)"
           export PATH="$WORKDIR/kernel_workspace/clang18/bin:$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
@@ -118,7 +114,7 @@ jobs:
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out gki_defconfig
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out KCFLAGS+=-Wno-error Image
 
-      - name: 📤 上传内核产物
+      - name: 📤 上传内核
         uses: actions/upload-artifact@v4
         with:
           name: Kernel_GT7Pro_Custom_Comm
