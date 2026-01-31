@@ -21,9 +21,9 @@ jobs:
           mkdir kernel_workspace && cd kernel_workspace
           sudo apt update && sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2 unzip
           
-          # 下载 Realme GT7 Pro (SM8750) 专用源码
-          aria2c -s16 -x16 -k1M https://github.com/realme-kernel-opensource/realme_GT7Pro-AndroidB-common-source/archive/refs/heads/master.zip -o common.zip
-          unzip -q common.zip && mv "realme_GT7Pro-AndroidB-common-source-master" common
+          # 下载 Realme GT7 Pro (SM8750) 专用源码 (修正大小写为 GT7pro)
+          aria2c -s16 -x16 -k1M https://github.com/realme-kernel-opensource/realme_GT7pro-AndroidB-common-source/archive/refs/heads/master.zip -o common.zip
+          unzip -q common.zip && mv "realme_GT7pro-AndroidB-common-source-master" common
           rm -rf common.zip
           
           # 下载编译器工具链
