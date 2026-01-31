@@ -7,7 +7,6 @@ jobs:
     name: Build_Realme_GT7Pro
     runs-on: ubuntu-latest
     env:
-      # 这里的后缀和时间与您截图中的官核信息完全匹配
       DEFAULT_SUFFIX: "-android15-8-gf4dc45704e54-abogki446052083-4k"
       KERNEL_TIME: "Fri Sep 19 06:13:40 UTC 2025"
     steps:
@@ -15,15 +14,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 🧹 自动清理磁盘空间 (核心步骤)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -a -f
+
       - name: 🛠 安装依赖并下载源码
         run: |
           rm -rf kernel_workspace
           mkdir kernel_workspace && cd kernel_workspace
           sudo apt update && sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev dos2unix ccache p7zip-full aria2 unzip
           
-          # 下载 Realme GT7 Pro (SM8750) 专用源码 (修正大小写为 GT7pro)
-          aria2c -s16 -x16 -k1M https://github.com/realme-kernel-opensource/realme_GT7pro-AndroidB-common-source/archive/refs/heads/master.zip -o common.zip
-          unzip -q common.zip && mv "realme_GT7pro-AndroidB-common-source-master" common
+          # 下载源码并修正分支名 (main)
+          aria2c -s16 -x16 -k1M https://github.com/realme-kernel-opensource/realme_GT7Pro-AndroidB-common-source/archive/refs/heads/main.zip -o common.zip
+          unzip -q common.zip && mv "realme_GT7Pro-AndroidB-common-source-main" common
           rm -rf common.zip
           
           # 下载编译器工具链
@@ -32,7 +39,7 @@ jobs:
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928/build-tools.zip -o build-tools.zip
           unzip -q build-tools.zip && rm -rf build-tools.zip
 
-      - name: 🛠️ 注入 /dev/my_comm 字符设备驱动 (ioctl 通信)
+      - name: 🛠️ 注入 /dev/my_comm 驱动 (修复 Makefile 逻辑)
         run: |
           cd kernel_workspace/common/drivers/misc
           cat <<EOF > my_ioctl_driver.c
@@ -50,12 +57,9 @@ jobs:
 
           static long my_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
               char buf[128];
-              switch(cmd) {
-                  case CMD_SEND_DATA:
-                      if (copy_from_user(buf, (char __user *)arg, sizeof(buf))) return -EFAULT;
-                      printk(KERN_INFO "内核通过 ioctl 收到数据: %s\n", buf);
-                      break;
-                  default: return -ENOTTY;
+              if (cmd == CMD_SEND_DATA) {
+                  if (copy_from_user(buf, (char __user *)arg, sizeof(buf))) return -EFAULT;
+                  printk(KERN_INFO "内核收到 ioctl 数据: %s\n", buf);
               }
               return 0;
           }
@@ -79,7 +83,8 @@ jobs:
           module_exit(my_exit);
           MODULE_LICENSE("GPL v2");
           EOF
-          echo "obj-y += my_ioctl_driver.o" >> Makefile
+          # 使用 sed 将驱动加入 Makefile 第一行，确保链接顺序正确
+          sed -i '1i\obj-y += my_ioctl_driver.o' Makefile
 
       - name: ⚙️ 配置 KernelSU 与 SUSFS
         run: |
@@ -95,7 +100,6 @@ jobs:
           cd kernel_workspace/common
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
-          # 注入版本后缀伪装
           sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"${DEFAULT_SUFFIX}\"/" arch/arm64/configs/gki_defconfig
           sed -i 's/${scm_version}//' scripts/setlocalversion
 
